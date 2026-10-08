@@ -175,16 +175,47 @@ jobs:
           name: topmostwindow-artifacts-x64
           path: "./rustdesk"
 
-      - name: Résumé du paquet
-        shell: bash
+      - name: Habillage NormaDesk (exe renommé + custom.txt signé + visuels)
+        shell: pwsh
         run: |
-          du -sh rustdesk
-          ls -la rustdesk | head -40
-          echo "RustDesk ${{ env.VERSION }} — moteur Norma Desk — commit ${{ github.sha }}" > rustdesk/NORMA-DESK-MOTEUR.txt
+          # preprocess.py --app-name NormaDesk attend NormaDesk.exe dans le dist
+          Move-Item ./rustdesk/rustdesk.exe ./rustdesk/NormaDesk.exe -Force
+          # custom.txt signé (serveur + clé Norma Tech) et visuels, commités dans le fork
+          Copy-Item ./norma-desk-brand/custom.txt ./rustdesk/custom.txt -Force
+          $assets = "./rustdesk/data/flutter_assets/assets"
+          foreach ($v in 'icon.png','icon.ico','logo.png','logo_light.png','logo_dark.png') {
+            if (Test-Path "./norma-desk-brand/$v") { Copy-Item "./norma-desk-brand/$v" "$assets/$v" -Force }
+          }
+          Write-Host "custom.txt : $(Test-Path ./rustdesk/custom.txt) ; NormaDesk.exe : $(Test-Path ./rustdesk/NormaDesk.exe)"
 
-      - name: Upload engine
+      - name: Upload moteur (secours)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: norma-desk-moteur-windows-x64
           path: rustdesk
+          retention-days: 90
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+        with:
+          msbuild-architecture: x86
+
+      - name: Build NormaDesk MSI
+        shell: pwsh
+        run: |
+          pushd ./res/msi
+          python preprocess.py -c --app-name NormaDesk -m "Norma Tech" -v ${{ env.VERSION }} --revision-version 0 -d ../../rustdesk
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
+          popd
+          New-Item -ItemType Directory -Force -Path ./out | Out-Null
+          Move-Item $msi.FullName "./out/NormaDesk-${{ env.VERSION }}-x64.msi"
+          Get-ChildItem ./out | ForEach-Object { "{0}  {1:N1} Mo" -f $_.Name, ($_.Length/1MB) }
+
+      - name: Upload NormaDesk MSI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: norma-desk-msi-x64
+          path: out/NormaDesk-*.msi
           retention-days: 90
